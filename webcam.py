@@ -5,17 +5,63 @@ import logging
 import os
 import platform
 import ssl
+import websockets
+import socketio, time
 
 from aiohttp import web
-from aiortc import RTCPeerConnection, RTCSessionDescription
+from aiortc import RTCPeerConnection, RTCSessionDescription, RTCIceCandidate
 from aiortc.contrib.media import MediaPlayer, MediaRelay
 from aiortc.rtcrtpsender import RTCRtpSender
 
 ROOT = os.path.dirname(__file__)
 
-
+loop = asyncio.get_event_loop()
+sio = socketio.AsyncClient()
 relay = None
 webcam = None
+
+async def send_ping():
+    global start_timer
+    start_timer = time.time()
+    await sio.emit('ping_from_client')
+
+async def join_room(room):
+    await sio.emit('join', {'username': 'webcam', 'room': room})
+    print('emit join')
+
+@sio.event
+async def ready(data):
+    print('joined room', data)
+    # await sio.emit('ack', {'event': 'ready', 'data': data})
+
+@sio.event
+async def send_ack(data):
+    print('acknowledged', data)
+    await sio.emit('ack', {'event': 'ack', 'data': data})
+
+
+@sio.event
+async def connect():
+    print('connected to server')
+    room = 1
+    await send_ack('connected to server')
+    await join_room(room)
+
+
+@sio.event
+async def pong_from_server():
+    global start_timer
+    latency = time.time() - start_timer
+    print('latency is {0:.2f} ms'.format(latency * 1000))
+    await sio.sleep(1)
+    if sio.connected:
+        await send_ping()
+
+
+async def start_server():
+    # await sio.connect('https://signaling-server-pfm2.onrender.com')
+    await sio.connect('http://127.0.0.1:5004')
+    await sio.wait()
 
 
 def create_local_tracks(play_from, decode):
@@ -115,6 +161,18 @@ async def on_shutdown(app):
     await asyncio.gather(*coros)
     pcs.clear()
 
+async def signaling_handler(ws, pc: RTCPeerConnection):
+    async for message in ws:
+        message = json.loads(message)
+        if "offer" in message:
+            await pc.setRemoteDescription(RTCSessionDescription(sdp=message["offer"], type=message["type"]))
+            answer = await pc.createAnswer()
+            await pc.setLocalDescription(answer)
+            await ws.send(json.dumps({"sdp": pc.localDescription.sdp, "type": pc.localDescription.type}))
+        elif "ice" in message:
+            candidate = message["ice"]
+            await pc.addIceCandidate(RTCIceCandidate(candidate))
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="WebRTC webcam demo")
@@ -161,4 +219,10 @@ if __name__ == "__main__":
     app.router.add_get("/", index)
     app.router.add_get("/client.js", javascript)
     app.router.add_post("/offer", offer)
+    
+    loop.run_until_complete(start_server())
+    
+    # # Create a task to handle incoming messages from the signaling server
+    # asyncio.ensure_future(signaling_handler(ws_connection, pc))
+    
     web.run_app(app, host=args.host, port=args.port, ssl_context=ssl_context)
