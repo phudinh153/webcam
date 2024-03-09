@@ -26,26 +26,28 @@ async def send_ping():
     await sio.emit('ping_from_client')
 
 async def join_room(room):
-    await sio.emit('join', {'username': 'webcam', 'room': room})
     print('emit join')
+    await sio.emit('join', {'username': 'webcam', 'room': room})
 
 @sio.event
 async def ready(data):
-    print('joined room', data)
-    # await sio.emit('ack', {'event': 'ready', 'data': data})
+    print('Received event: ready')
+    print('Received data:', data)
 
 @sio.event
+async def ack(data):
+    print('acknowledged', data)
+
 async def send_ack(data):
     print('acknowledged', data)
-    await sio.emit('ack', {'event': 'ack', 'data': data})
+    await sio.emit('ack', {'username': 'ack', 'room': 1})
 
 
 @sio.event
 async def connect():
     print('connected to server')
-    room = 1
     await send_ack('connected to server')
-    await join_room(room)
+    # await join_room(room)
 
 
 @sio.event
@@ -225,4 +227,4 @@ if __name__ == "__main__":
     # # Create a task to handle incoming messages from the signaling server
     # asyncio.ensure_future(signaling_handler(ws_connection, pc))
     
-    web.run_app(app, host=args.host, port=args.port, ssl_context=ssl_context)
+    # web.run_app(app, host=args.host, port=args.port, ssl_context=ssl_context)
